@@ -4,6 +4,7 @@
 
 		Copyright (c) 2014 Jann Paolo Caña
 		Copyright (c) 2014 Richeve Siodina Bebedor
+		Copyright (c) 2014 Regynald Reiner Ventura
 
 		Permission is hereby granted, free of charge, to any person obtaining a copy
 		of this software and associated documentation files (the "Software"), to deal
@@ -48,22 +49,26 @@
 	@end-module-configuration
 
 	@module-documentation:
+		Update the value using 	the specified condition with the following format:
 
+			schema@key=value
+
+		If no schema is specified then we will assume that the collectionName == schema.
 	@end-module-documentation
 
 	@include:
 		{			
-			"util@nodejs": "util",
-			"mongodb@npm": "mongodb"
+			"mongoose@npm": "mongoose",
+			"resolve-query-condition@github.com/volkovasystems": "resolveQueryCondition"
 		}
 	@end-include
 */
 
-var updateValue = function updateValue( key, value, collectionName, databaseName, databaseHost, databasePort, callback ){
+var updateValue = function updateValue( condition, value, collectionName, databaseName, databaseHost, databasePort, callback ){
 	/*:
 		@meta-configuration:
 			{
-				"key:required": "string",
+				"condition:required": "object",
 				"value:required": "string",
 				"collectionName:required": "string",
 				"databaseName:required": "string",
@@ -73,6 +78,10 @@ var updateValue = function updateValue( key, value, collectionName, databaseName
 			}
 		@end-meta-configuration
 	*/
+
+		var queryCondition = resolveQueryCondition( condition );
+		var dataSchema = queryCondition.reference;
+		var queryObject = queryCondition.queryObject;
 
 	//NOOP override.
 	callback = callback || function( ){ };
@@ -84,45 +93,33 @@ var updateValue = function updateValue( key, value, collectionName, databaseName
 		databaseName 
 	].join( "" );
 
-	var connection = database.connect( mongoDatabaseURL );
+	var connection = mongoose.createConnection( mongoDatabaseURL );
 
 	connection.on( "connected",
-		function onConnect(  ){
-			try{
-				key = JSON.parse( key );
-				value = JSON.parse( value );
-			}catch( error ){
-				isCorrectFormat = false;
-			}
+		function onConnected( ){
+			//Check if we have the model in the list of models.
+			if( connection.modelNames( ).indexOf( dataSchema ) != -1 ){
+				var dataModel = mongoose.model( dataSchema, collectionName );
 
-			if( !isCorrectFormat ){
-				var msg = "\n\n  command arg1 arg2 arg3"
-				+ "\n\targ1 ----- query ex. {\"field\":\"value\"}"
-				+"\n\targ2 ----- collection name"
-				+"\n\targ3 ----- database name";
-				isCorrectFormat = true; // set to default value for checking again
+				dataModel.findOneAndUpdate( queryObject, value,
+					function onUpdate( error ){
+						mongoose.connection.close( );
+
+						if( error ){
+							console.error( error );
+							callback ( error );
+
+						}else{
+							console.log( true );
+							callback( null, true );
+						}
+					} );
 			}else{
-				//{ w:1 } // prevents from inserting newField if field is missing
-				database.collection( collectionName,
-					function onInsert( error , collection ){
-						collection.update( key, { $set : value }, { w:1 },
-							function onRewrite( error, records ){
-								database.close( );
-								if( error ){
-									console.error( error );
-
-									callback ( error );
-
-								}else{
-									var encodedValue = new Buffer( util.inspect( records, { "depth": null } ) ).toString( "base64" );
-									console.log( encodedValue );
-
-									callback( null, records );
-					}
-				} );
-			} );
-		}
-	} );
+				var error = new Error( "invalid schema" );
+				console.error( error );
+				callback( error );
+			}
+		} );
 
 	connection.on( "error",
 		function onError( error ){
@@ -130,16 +127,9 @@ var updateValue = function updateValue( key, value, collectionName, databaseName
 
 			callback( error );
 		} );
-
 };
 
-var mongodb = require( "mongodb" );
-var database = mongodb.Db;
-var isCorrectFormat = true;
+var mongoose = require( "mongoose" );
+var resolveQueryCondition = require( "./resolve-query-condition/resolve-query-condition.js" );
 
-exports.updateValue = updateValue;
-
-updateValue( "{\"abc\":\"12345\"}", "{\"abc\":\"1\"}","testpao", "reinvent1", "127.0.0.1", "27017",
-	function( message ){
-		console.log( message );
-	} );
+module.exports = updateValue;
